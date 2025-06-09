@@ -7,48 +7,60 @@ pragma solidity >0.8.0;
  * @author Francisco López G
  */
 contract Auction {
+    // ==============================================
+    //                   STRUCTS
+    // ==============================================
+    
     /// @dev Structure for storing bidder information
-    /// @param bidderAddress Address of the bidder
-    /// @param amount Amount of the bid
     struct Bidder {
         address bidderAddress;
         uint256 amount;
     }
 
+    // ==============================================
+    //                STATE VARIABLES
+    // ==============================================
+    
     /// @notice Contract owner address
     address public owner;
+    
     /// @notice Timestamp when the auction will end
     uint256 public endTime;
+    
     /// @notice Minimum percentage increase for new bids (e.g., 105 = 5% increase)
     uint256 public minBidIncrease;
+    
     /// @notice Commission rate percentage taken from refunds
     uint256 public commissionRate;
+    
     /// @notice Time extension applied when bids are placed near end
     uint256 public extensionTime;
+    
+    /// @notice Total commission accumulated from refunds
+    uint256 public totalCommission;
+    
     /// @notice Flag indicating if auction has been ended
     bool public isAuctionEnded;
+    
+    /// @notice Flag indicating if all refunds have been processed
+    bool public allRefunded;
+    
     /// @notice Current highest bidder information
     Bidder public highestBidder;
-
+    
+    /// @notice Information about the auction winner and the winning bid
+    Bidder public winner;
+    
     /// @notice Mapping of addresses to their pending refund amounts
     mapping(address => uint256) public pendingReturns;
-
+    
     /// @notice Array of all bids placed in the auction
     Bidder[] private allBids;
 
-    /**
-     * @notice Contract constructor initializing auction parameters
-     * @dev Sets default auction parameters (7 day duration, 5% min increase, 2% commission)
-     */
-    constructor() {
-        owner = msg.sender;
-        endTime = block.timestamp + 7 days;
-        minBidIncrease = 105; // 5% minimum increase
-        commissionRate = 2; // 2% commission
-        extensionTime = 10 minutes;
-        isAuctionEnded = false;
-    }
-
+    // ==============================================
+    //                   EVENTS
+    // ==============================================
+    
     /**
      * @notice Emitted when a new bid is placed
      * @param bidder Address of the bidder
@@ -64,18 +76,18 @@ contract Auction {
     event AuctionEnded(address indexed winner, uint256 amount);
 
     /**
-     * @notice Emitted when a full refund is processed
-     * @param bidder Address receiving refund
-     * @param amount Refund amount after commission
-     */
-    event Refunded(address indexed bidder, uint256 amount);
-
-    /**
      * @notice Emitted when a partial refund is processed
      * @param bidder Address receiving refund
      * @param amount Full refund amount (no commission)
      */
     event PartialRefund(address indexed bidder, uint256 amount);
+
+    /**
+     * @notice Emitted when a full refund is processed
+     * @param bidder Address receiving refund
+     * @param amount Refund amount after commission
+     */
+    event Refunded(address indexed bidder, uint256 amount);
 
     /**
      * @notice Emitted when the owner withdraws the winning bid amount
@@ -84,6 +96,10 @@ contract Auction {
      */
     event OwnerWithdrawal(address indexed owner, uint256 amount);
 
+    // ==============================================
+    //                 MODIFIERS
+    // ==============================================
+    
     /// @dev Modifier restricting access to contract owner
     modifier onlyOwner() {
         require(
@@ -109,6 +125,27 @@ contract Auction {
         _;
     }
 
+    // ==============================================
+    //              CONSTRUCTOR
+    // ==============================================
+    
+    /**
+     * @notice Contract constructor initializing auction parameters
+     * @dev Sets default auction parameters (7 day duration, 5% min increase, 2% commission)
+     */
+    constructor() {
+        owner = msg.sender;
+        endTime = block.timestamp + 1 minutes;
+        minBidIncrease = 105; // 5% minimum increase
+        commissionRate = 2; // 2% commission
+        extensionTime = 10 minutes;
+        isAuctionEnded = false;
+    }
+
+    // ==============================================
+    //              PUBLIC FUNCTIONS
+    // ==============================================
+    
     /**
      * @notice Places a bid in the auction
      * @dev Bid must be at least 5% higher than current highest bid
@@ -139,7 +176,7 @@ contract Auction {
 
         emit NewBid(msg.sender, msg.value);
 
-        // Verify and end the auction if the time is exceeded
+        // End auction if time has expired
         if (block.timestamp >= endTime) {
             _finalizeAuction();
         }
@@ -151,7 +188,7 @@ contract Auction {
      * @return Address and amount of winning bid
      */
     function getWinner() external view onlyEnded returns (address, uint256) {
-        return (highestBidder.bidderAddress, highestBidder.amount);
+        return (winner.bidderAddress, winner.amount);
     }
 
     /**
@@ -164,30 +201,28 @@ contract Auction {
 
     /**
      * @notice Withdraw refundable amounts
-     * @dev Applies commission if auction has ended
-     * @dev Emits Refunded or PartialRefund event based on auction state
+     * @dev Emits PartialRefund event based on auction state
      */
-    function withdraw() external {
+    function partialRefund() external onlyActive {
         uint256 refundable = pendingReturns[msg.sender];
         require(refundable > 0, "No refund available");
+        pendingReturns[msg.sender] = 0; // Prevent reentrancy
 
-        // Prevent reentrancy
-        pendingReturns[msg.sender] = 0;
-
-        // Transfer with 2% commission if the auction has ended
-        uint256 commission = (refundable * commissionRate) / 100;
-        uint256 toTransfer = isAuctionEnded
-            ? refundable - commission
-            : refundable;
-
-        (bool success, ) = msg.sender.call{value: toTransfer}("");
+        (bool success, ) = payable(msg.sender).call{value: refundable}("");
         require(success, "Transfer failed");
 
-        if (isAuctionEnded) {
-            emit Refunded(msg.sender, toTransfer);
-        } else {
-            emit PartialRefund(msg.sender, toTransfer);
-        }
+        emit PartialRefund(msg.sender, refundable);
+    }
+
+    /**
+     * @notice Ends the auction and declares the winner
+     * @dev Allows anyone to finalize the auction after the end time has passed
+     * @dev Emits `AuctionEnded` event with winner address and winning amount
+     */
+    function finalizeAuction() external {
+        require(!isAuctionEnded, "Auction already ended");
+        require(block.timestamp >= endTime, "Auction has not ended yet");
+        _finalizeAuction();
     }
 
     /**
@@ -195,28 +230,44 @@ contract Auction {
      * @return secondsLeft Remaining time in seconds (0 if ended)
      */
     function getRemainingTime() external view returns (uint256) {
-        if (block.timestamp >= endTime) return 0;
+        if (block.timestamp >= endTime || isAuctionEnded) return 0;
         return endTime - block.timestamp;
     }
 
+    // ==============================================
+    //             RESTRICTED FUNCTIONS
+    // ==============================================
+    
     /**
-     * @dev Internal function to finalize the auction
-     * @dev Sets auction state to ended and records winning bid information
+     * @notice Refunds all non-winning bidders automatically
+     * @dev Only callable by owner after auction ends
+     * @dev Processes all bids except the winning one
+     * @dev Emits Refunded event for each processed bid
      */
-    function _finalizeAuction() private {
-        require(!isAuctionEnded, "Already finalized");
-        isAuctionEnded = true;
-        emit AuctionEnded(highestBidder.bidderAddress, highestBidder.amount);
-    }
+    function refundAll() external onlyOwner onlyEnded {
+        require(!allRefunded, "All bids already refunded");
 
-    /**
-     * @notice Ends the auction and declares the winner
-     * @dev Can only be called by the owner after the auction end time has passed
-     * @dev Emits `AuctionEnded` event with winner address and winning amount
-     */
-    function endAuction() external onlyOwner {
-        require(!isAuctionEnded, "Auction already ended");
-        _finalizeAuction();
+        for (uint256 i = 0; i < allBids.length; i++) {
+            if (
+                allBids[i].bidderAddress != winner.bidderAddress &&
+                pendingReturns[allBids[i].bidderAddress] > 0
+            ) {
+                uint256 refundable = pendingReturns[allBids[i].bidderAddress];
+                require(refundable > 0, "No refund available");
+                pendingReturns[allBids[i].bidderAddress] = 0; // Prevent reentrancy
+                uint256 commission = (refundable * commissionRate) / 100; // Transfer with 2% commission
+                totalCommission += commission;
+                uint256 toTransfer = refundable - commission;
+
+                (bool success, ) = payable(allBids[i].bidderAddress).call{
+                    value: toTransfer
+                }("");
+                require(success, "Transfer failed");
+
+                emit Refunded(allBids[i].bidderAddress, toTransfer);
+            }
+        }
+        allRefunded = true;
     }
 
     /**
@@ -225,13 +276,32 @@ contract Auction {
      * @dev Transfers the full winning bid amount to the contract owner
      */
     function withdrawWinningBid() external onlyOwner onlyEnded {
-        require(highestBidder.amount > 0, "Already withdrawn");
-        uint256 amount = highestBidder.amount;
+        require(
+            highestBidder.amount > 0 || totalCommission > 0,
+            "Already withdrawn"
+        );
+        uint256 amount = highestBidder.amount + totalCommission;
         highestBidder.amount = 0; // Prevent reentrancy
+        totalCommission = 0;
 
         (bool success, ) = payable(owner).call{value: amount}("");
         require(success, "Transfer failed");
 
         emit OwnerWithdrawal(owner, amount);
+    }
+
+    // ==============================================
+    //              INTERNAL FUNCTIONS
+    // ==============================================
+    
+    /**
+     * @dev Internal function to finalize the auction
+     * @dev Sets auction state to ended and records winning bid information
+     */
+    function _finalizeAuction() private {
+        isAuctionEnded = true;
+        winner.bidderAddress = highestBidder.bidderAddress;
+        winner.amount = highestBidder.amount;
+        emit AuctionEnded(winner.bidderAddress, winner.amount);
     }
 }

@@ -2,22 +2,23 @@
 
 ![Solidity](https://img.shields.io/badge/Solidity-%23363636.svg?style=for-the-badge&logo=solidity&logoColor=white) ![Ethereum](https://img.shields.io/badge/Ethereum-3C3C3D?style=for-the-badge&logo=Ethereum&logoColor=white)
 
-A robust, feature-rich Ethereum smart contract implementing a decentralized auction system with automated bid validation, time extension, partial refunds, commission-based finalization, and secure fund management. Built in Solidity and deployed on the **Sepolia** testnet.
+A robust and secure Ethereum smart contract implementing a decentralized auction system with bid validation, automatic time extension, partial and post-auction refunds, commission handling, and full bid history tracking. Built in Solidity and deployed on the **Sepolia** testnet.
 
 ---
 
 ## 📚 Table of Contents
 
-- [Features](#features)
-- [Constructor Parameters](#constructor-parameters)
-- [Contract Variables](#contract-variables)
-- [Public Functions](#public-functions)
-- [Events](#events)
-- [Modifiers](#modifiers)
-- [Deployment Guide](#deployment-guide)
-- [Usage Guide](#usage-guide)
-- [Security Considerations](#security-considerations)
-- [License](#license)
+- [✨ Features](#-features)
+- [⚙️ Constructor Parameters](#️-constructor-parameters)
+- [📊 Contract Variables](#-contract-variables)
+- [📂 Public Functions](#-public-functions)
+- [📣 Events](#-events)
+- [🛡️ Modifiers](#️-modifiers)
+- [🚀 Deployment Guide](#-deployment-guide)
+- [🧪 Usage Guide](#-usage-guide)
+- [🔐 Security Considerations](#-security-considerations)
+- [📎 External Links](#-external-links)
+- [📄 License](#-license)
 
 ---
 
@@ -27,45 +28,54 @@ A robust, feature-rich Ethereum smart contract implementing a decentralized auct
 
 - Place valid bids (≥ 5% higher than current highest bid).
 - Automatic 10-minute extension for last-minute bids.
-- Withdraw overbid amounts (full refund during auction, minus 2% commission after).
-- View auction winner and winning bid.
-- Full bid history for transparency.
-- Owner-only auction termination and fund withdrawal.
+- Withdraw your overbid amount during auction (full refund).
+- Owner can refund all losing bids after auction (2% commission retained).
+- Auction can finalize automatically or manually.
+- Clear winner selection after auction ends.
+- Full bid history accessible through a getter.
 
 ### 🔁 Advanced Functionalities
 
-- **Partial refund mechanism**: Users can reclaim overbid funds from previous offers.
-- **Time extension logic**: Any bid made in the last 10 minutes extends the auction by 10 more minutes.
-- **Commission-based refund**: After auction ends, losers receive refunds minus 2% commission.
-- **Secure ETH handling**: Prevents reentrancy and ensures safe transfers.
+- **Partial refund** mechanism available during active auction.
+- **Post-auction refunds** with automatic commission deduction.
+- **Commission tracking** and withdrawal by owner.
+- **Reentrancy-protected** ETH transfers using Checks-Effects-Interactions pattern.
+- **Bidder struct** for organizing bid data.
+- **Finalization logic** encapsulated in a private internal function.
 
 ---
 
 ## ⚙️ Constructor Parameters
 
-The contract is initialized with the following default parameters:
+| Parameter        | Value                | Description                                       |
+| ---------------- | -------------------- | ------------------------------------------------- |
+| `duration`       | `7 days` (hardcoded) | Auction duration from deployment                  |
+| `minBidIncrease` | `105`                | Minimum bid increment as a multiplier (105 = +5%) |
+| `commissionRate` | `2`                  | Commission percentage for post-auction refunds    |
+| `extensionTime`  | `600`                | 10-minute extension window (600 seconds)          |
 
-| Parameter        | Value     | Description                                  |
-| ---------------- | --------- | -------------------------------------------- |
-| `endTime`        | +7 days   | Auction duration from contract deployment    |
-| `minBidIncrease` | `105`     | 5% minimum bid increment                     |
-| `commissionRate` | `2`       | 2% commission on post-auction refunds        |
-| `extensionTime`  | `10 mins` | Extra time if bid placed in final 10 minutes |
+> ℹ️ Note: These parameters are currently hardcoded in the constructor.
 
 ---
 
 ## 📊 Contract Variables
 
-| Variable         | Type       | Description                               |
-| ---------------- | ---------- | ----------------------------------------- |
-| `owner`          | `address`  | Contract deployer and manager             |
-| `endTime`        | `uint256`  | Auction expiration timestamp              |
-| `highestBidder`  | `Bidder`   | Struct of current top bidder and amount   |
-| `allBids`        | `Bidder[]` | Array storing all bids                    |
-| `pendingReturns` | `mapping`  | Tracks refundable amounts for each bidder |
-| `isAuctionEnded` | `bool`     | Tracks whether auction has been finalized |
+| Variable          | Type       | Description                                      |
+| ----------------- | ---------- | ------------------------------------------------ |
+| `owner`           | `address`  | Address of contract deployer                     |
+| `endTime`         | `uint256`  | Auction end timestamp                            |
+| `minBidIncrease`  | `uint256`  | Minimum bid multiplier (e.g., 105 = +5%)         |
+| `commissionRate`  | `uint256`  | Commission rate (%) for post-auction refunds     |
+| `extensionTime`   | `uint256`  | Additional time added for late bids (in seconds) |
+| `totalCommission` | `uint256`  | Accumulated commission held for withdrawal       |
+| `isAuctionEnded`  | `bool`     | Indicates if auction has ended                   |
+| `allRefunded`     | `bool`     | Indicates if all non-winning bids were refunded  |
+| `highestBidder`   | `Bidder`   | Current highest bid and bidder                   |
+| `winner`          | `Bidder`   | Final winner and winning bid                     |
+| `pendingReturns`  | `mapping`  | Refundable balances for bidders                  |
+| `allBids`         | `Bidder[]` | History of all valid bids                        |
 
-### `Bidder` Struct
+### 📦 `Bidder` Struct
 
 ```solidity
 struct Bidder {
@@ -80,66 +90,72 @@ struct Bidder {
 
 ### 🔨 `bid()`
 
-- Place a bid with `msg.value`.
-- Must be ≥ 5% higher than current bid.
-- Extends auction by 10 minutes if bid placed in final 10 minutes.
-- Triggers `NewBid` event.
-- Automatically ends auction if `block.timestamp ≥ endTime`.
+- Places a new bid.
+- Requires ≥5% increase from current highest bid.
+- Extends time if bid is placed within last 10 minutes.
+- Emits `NewBid`.
+- Finalizes auction if block timestamp ≥ `endTime`.
+
+### 💸 `partialRefund()`
+
+- Allows users to claim a refund of their overbid during an active auction.
+- Refund is full (no commission).
+- Emits `PartialRefund`.
 
 ### 🏆 `getWinner()`
 
-- View winner address and final bid amount.
-- Callable **only after auction ends**.
+- Returns winner’s address and bid amount.
+- Only callable after auction ends.
 
 ### 📜 `getAllBids()`
 
-- Returns an array of all valid bids.
-- Useful for bid history auditing.
-
-### 💸 `withdraw()`
-
-- Refunds previous bids.
-- During auction: full refund.
-- After auction: refund minus 2% commission.
-- Fires `Refunded` or `PartialRefund`.
+- Returns the full array of bids placed during the auction.
 
 ### ⏳ `getRemainingTime()`
 
 - Returns seconds left until auction ends.
-- Returns `0` if already ended.
+- Returns `0` if auction is ended or time is up.
 
-### 🛑 `endAuction()`
+### 💳 `refundAll()`
 
-- Callable only by the contract `owner`.
-- Forces auction finalization.
-- Triggers `AuctionEnded` event.
+- Callable by owner **after** the auction ends.
+- Refunds all non-winning bidders, subtracting 2% commission.
+- Transfers refund using `.call`.
+- Emits `Refunded` for each address.
+
+### 🛑 `finalizeAuction()`
+
+- Can be called by anyone **after** auction end time.
+- Finalizes auction and declares winner.
+- Emits `AuctionEnded`.
 
 ### 💰 `withdrawWinningBid()`
 
-- Allows `owner` to withdraw winning bid after auction ends.
-- Sends full amount (no commission).
+- Transfers highest bid + commissions to owner.
+- Only callable after auction ends.
+- Emits `OwnerWithdrawal`.
 
 ---
 
 ## 📣 Events
 
-| Event             | Trigger Condition                                    |
-| ----------------- | ---------------------------------------------------- |
-| `NewBid`          | When a valid new bid is placed                       |
-| `AuctionEnded`    | When auction is finalized (auto or manually)         |
-| `Refunded`        | Refund to bidder **after** auction (with commission) |
-| `PartialRefund`   | Refund to bidder **during** auction (full refund)    |
-| `OwnerWithdrawal` | Owner withdraws final bid amount after auction       |
+| Event             | Description                                             |
+| ----------------- | ------------------------------------------------------- |
+| `NewBid`          | Emitted when a valid bid is placed                      |
+| `AuctionEnded`    | Emitted when auction is finalized                       |
+| `PartialRefund`   | Emitted when bidder claims refund during active auction |
+| `Refunded`        | Emitted during post-auction refund (minus commission)   |
+| `OwnerWithdrawal` | Emitted when owner withdraws winning bid + commissions  |
 
 ---
 
 ## 🛡️ Modifiers
 
-| Modifier     | Purpose                                   |
-| ------------ | ----------------------------------------- |
-| `onlyOwner`  | Restricts function to contract deployer   |
-| `onlyActive` | Restricts to when auction is still active |
-| `onlyEnded`  | Restricts to after auction is ended       |
+| Modifier     | Description                                  |
+| ------------ | -------------------------------------------- |
+| `onlyOwner`  | Restricts access to contract owner           |
+| `onlyActive` | Ensures auction is still ongoing             |
+| `onlyEnded`  | Ensures auction has ended (time or manually) |
 
 ---
 
@@ -147,47 +163,57 @@ struct Bidder {
 
 ### Requirements
 
-- Solidity compiler ^0.8.0
-- Ethereum-compatible testnet (Sepolia recommended)
-- Recommended tools: **Remix**, **Hardhat**, or **Foundry**
+- Solidity ^0.8.0
+- Network: Sepolia
+- Tools: Hardhat / Foundry / Remix
 
-### Verifying Contract
+### Steps
 
-Use Etherscan’s Contract Verification Tool with the same compiler version used to deploy the contract.
+1. Compile the contract using your chosen tool.
+2. Deploy using Sepolia testnet.
+3. Fund wallet with Sepolia ETH (via faucet).
+4. Verify contract via Etherscan with correct settings.
 
 ---
 
 ## 🧪 Usage Guide
 
-### Bidders
+### For Bidders
 
-1. Call `bid()` with a value ≥ 5% more than the current highest bid.
-2. If outbid, retrieve your ETH via `withdraw()`.
-3. After auction ends, call `getWinner()` to see who won.
+1. Call `bid()` sending ETH ≥ 5% more than current bid.
+2. If overbid later, you may:
 
-### Owner
+   - Call `partialRefund()` during auction to withdraw.
+   - Wait for owner to call `refundAll()` post-auction.
 
-1. Call `endAuction()` after auction time expires.
-2. Call `withdrawWinningBid()` to retrieve the final amount.
+### For Owner
+
+1. Call `finalizeAuction()` after time expires (or wait for auto).
+2. Call `refundAll()` to process all refunds with commission.
+3. Call `withdrawWinningBid()` to collect the winning funds + commission.
 
 ---
 
 ## 🔐 Security Considerations
 
-- ✅ Reentrancy-safe ETH transfers (`.call{value: ...}` with `pendingReturns[msg.sender] = 0`)
-- ✅ Validations ensure bid logic correctness (e.g., 5% rule).
-- ✅ Restricted access with modifiers (`onlyOwner`, `onlyActive`, `onlyEnded`)
-- ✅ Internal `_finalizeAuction()` to avoid duplicate finalization
+- Uses `.call` with reentrancy prevention (by zeroing state before external transfer).
+- No upgradeability mechanism (stateless).
+- Commission logic only applies post-auction.
+- `pendingReturns` protect against losing funds to overbids.
+- Consider integration with `ReentrancyGuard` if adding external integrations.
 
 ---
 
 ## 📎 External Links
 
-- 🔗 **Contract (Sepolia)**: \[Paste Verified Etherscan Link Here]
-- 💾 **GitHub Repository**: \[Paste GitHub Repo Link Here]
+- [Etherscan Sepolia](https://sepolia.etherscan.io/)
+- [Solidity Docs](https://docs.soliditylang.org)
+- [Remix IDE](https://remix.ethereum.org)
 
 ---
 
 ## 📄 License
 
-This smart contract is licensed under the [MIT License](./LICENSE).
+This project is licensed under the MIT License.
+
+---
