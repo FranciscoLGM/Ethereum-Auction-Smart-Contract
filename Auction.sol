@@ -10,7 +10,7 @@ contract Auction {
     // ==============================================
     //                   STRUCTS
     // ==============================================
-    
+
     /// @dev Structure for storing bidder information
     struct Bidder {
         address bidderAddress;
@@ -20,47 +20,47 @@ contract Auction {
     // ==============================================
     //                STATE VARIABLES
     // ==============================================
-    
+
     /// @notice Contract owner address
     address public owner;
-    
+
     /// @notice Timestamp when the auction will end
     uint256 public endTime;
-    
+
     /// @notice Minimum percentage increase for new bids (e.g., 105 = 5% increase)
     uint256 public minBidIncrease;
-    
+
     /// @notice Commission rate percentage taken from refunds
     uint256 public commissionRate;
-    
+
     /// @notice Time extension applied when bids are placed near end
     uint256 public extensionTime;
-    
+
     /// @notice Total commission accumulated from refunds
     uint256 public totalCommission;
-    
+
     /// @notice Flag indicating if auction has been ended
     bool public isAuctionEnded;
-    
+
     /// @notice Flag indicating if all refunds have been processed
     bool public allRefunded;
-    
+
     /// @notice Current highest bidder information
     Bidder public highestBidder;
-    
+
     /// @notice Information about the auction winner and the winning bid
     Bidder public winner;
-    
+
     /// @notice Mapping of addresses to their pending refund amounts
     mapping(address => uint256) public pendingReturns;
-    
+
     /// @notice Array of all bids placed in the auction
     Bidder[] private allBids;
 
     // ==============================================
     //                   EVENTS
     // ==============================================
-    
+
     /**
      * @notice Emitted when a new bid is placed
      * @param bidder Address of the bidder
@@ -99,7 +99,7 @@ contract Auction {
     // ==============================================
     //                 MODIFIERS
     // ==============================================
-    
+
     /// @dev Modifier restricting access to contract owner
     modifier onlyOwner() {
         require(
@@ -125,17 +125,23 @@ contract Auction {
         _;
     }
 
+    /// @dev Modifier preventing owner from bidding
+    modifier notOwner() {
+        require(msg.sender != owner, "Owner cannot place bids");
+        _;
+    }
+
     // ==============================================
     //              CONSTRUCTOR
     // ==============================================
-    
+
     /**
      * @notice Contract constructor initializing auction parameters
      * @dev Sets default auction parameters (7 day duration, 5% min increase, 2% commission)
      */
     constructor() {
         owner = msg.sender;
-        endTime = block.timestamp + 1 minutes;
+        endTime = block.timestamp + 7 days;
         minBidIncrease = 105; // 5% minimum increase
         commissionRate = 2; // 2% commission
         extensionTime = 10 minutes;
@@ -145,7 +151,7 @@ contract Auction {
     // ==============================================
     //              PUBLIC FUNCTIONS
     // ==============================================
-    
+
     /**
      * @notice Places a bid in the auction
      * @dev Bid must be at least 5% higher than current highest bid
@@ -153,7 +159,7 @@ contract Auction {
      * @dev Emits NewBid event on successful bid
      * @dev Automatically finalizes auction if time has expired
      */
-    function bid() external payable onlyActive {
+    function bid() external payable onlyActive notOwner {
         require(msg.value > 0, "Bid must be greater than 0");
         require(
             msg.value >= (highestBidder.amount * minBidIncrease) / 100,
@@ -237,7 +243,7 @@ contract Auction {
     // ==============================================
     //             RESTRICTED FUNCTIONS
     // ==============================================
-    
+
     /**
      * @notice Refunds all non-winning bidders automatically
      * @dev Only callable by owner after auction ends
@@ -293,7 +299,7 @@ contract Auction {
     // ==============================================
     //              INTERNAL FUNCTIONS
     // ==============================================
-    
+
     /**
      * @dev Internal function to finalize the auction
      * @dev Sets auction state to ended and records winning bid information
