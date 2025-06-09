@@ -42,6 +42,7 @@ A robust and secure Ethereum smart contract implementing a decentralized auction
 - **Bidder struct** for clean, structured bid management.
 - **Finalization logic** encapsulated in a private function.
 - **Reentrancy protection** using the Checks-Effects-Interactions pattern.
+- **receive() / fallback()** implemented to reject unintended ETH transfers.
 
 ---
 
@@ -135,6 +136,22 @@ struct Bidder {
 - Transfers winning bid amount plus accumulated commissions to owner.
 - Emits `OwnerWithdrawal`.
 
+### 🚫 `receive()` / `fallback()`
+
+- Rejects any direct ETH transfers or invalid calls.
+- Protects the contract from unintended deposits or `selfdestruct` attacks.
+- Reverts with a clear error message:
+
+```solidity
+receive() external payable {
+    revert("Direct ETH transfers not allowed");
+}
+
+fallback() external payable {
+    revert("Invalid function call or direct ETH transfer");
+}
+```
+
 ---
 
 ## 📣 Events
@@ -190,10 +207,11 @@ struct Bidder {
 
 ## 🔐 Security Considerations
 
-- Follows Checks-Effects-Interactions pattern.
-- All external transfers done via `.call()` with reentrancy protection.
+- Follows **Checks-Effects-Interactions** pattern.
+- All external transfers done via `.call()` with **reentrancy protection**.
 - Owner cannot place bids (`notOwner` modifier).
 - Refunds and withdrawals are protected from repeated access.
+- ✅ **ETH Transfer Lockdown**: both `receive()` and `fallback()` functions are explicitly defined to **revert** any unintended ETH transfers or invalid function calls, ensuring funds are only accepted via the controlled `bid()` logic.
 
 ---
 

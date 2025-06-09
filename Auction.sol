@@ -310,4 +310,22 @@ contract Auction {
         winner.amount = highestBidder.amount;
         emit AuctionEnded(winner.bidderAddress, winner.amount);
     }
+
+    // ==============================================
+    //      FALLBACK / RECEIVE SAFETY MECHANISMS
+    // ==============================================
+
+    /**
+     * @notice Rejects direct ETH transfers without data
+     */
+    receive() external payable {
+        revert("Direct ETH transfers not allowed");
+    }
+
+    /**
+     * @notice Rejects calls to undefined functions or direct ETH with data
+     */
+    fallback() external payable {
+        revert("Invalid function call or direct ETH transfer");
+    }
 }
