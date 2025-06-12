@@ -1,331 +1,244 @@
-// SPDX-License-Identifier: MIT
-pragma solidity >0.8.0;
+# 🧾 Ethereum Auction Smart Contract
 
-/**
- * @title Smart Contract Auction
- * @dev Implements an ETH auction system with partial refunds, commission fees, and automatic time extensions
- * @author Francisco López G
- */
-contract Auction {
-    // ==============================================
-    //                   STRUCTS
-    // ==============================================
+![Solidity](https://img.shields.io/badge/Solidity-%23363636.svg?style=for-the-badge\&logo=solidity\&logoColor=white) ![Ethereum](https://img.shields.io/badge/Ethereum-3C3C3D?style=for-the-badge\&logo=Ethereum\&logoColor=white)
 
-    /// @dev Structure for storing bidder information
-    struct Bidder {
-        address bidderAddress;
-        uint256 amount;
-    }
+A robust and secure Ethereum smart contract implementing a decentralized auction system with validated bidding, automatic time extension, partial and post-auction refunds, commission handling, bid history, and emergency mechanisms. Built in Solidity and deployed on the **Sepolia** testnet.
 
-    // ==============================================
-    //                STATE VARIABLES
-    // ==============================================
+---
 
-    /// @notice Contract owner address
-    address public owner;
+## 📚 Table of Contents
 
-    /// @notice Timestamp when the auction will end
-    uint256 public endTime;
+* [✨ Features](#-features)
+* [⚙️ Constructor Parameters](#️-constructor-parameters)
+* [📊 Contract Variables](#-contract-variables)
+* [📂 Public Functions](#-public-functions)
+* [📣 Events](#-events)
+* [🛡️ Modifiers](#️-modifiers)
+* [🚀 Deployment Guide](#-deployment-guide)
+* [🧪 Usage Guide](#-usage-guide)
+* [🔐 Security Considerations](#-security-considerations)
+* [📎 External Links](#-external-links)
+* [📄 License](#-license)
 
-    /// @notice Minimum percentage increase for new bids (e.g., 105 = 5% increase)
-    uint256 public minBidIncrease;
+---
 
-    /// @notice Commission rate percentage taken from refunds
-    uint256 public commissionRate;
+## ✨ Features
 
-    /// @notice Time extension applied when bids are placed near end
-    uint256 public extensionTime;
+### ✅ Core Functionalities
 
-    /// @notice Total commission accumulated from refunds
-    uint256 public totalCommission;
+* Place valid bids (≥ 5% higher than current highest bid).
+* First bid must be at least **1 ETH**.
+* Automatic 10-minute extension for last-minute bids.
+* Withdraw overbid amounts **during** auction (no fee).
+* Owner can refund all losing bids **after** auction (2% commission).
+* Full bid history accessible via public getter.
+* Public winner retrieval after finalization.
+* Auction ends automatically when time expires or owner terminates it.
 
-    /// @notice Flag indicating if auction has been ended
-    bool public isAuctionEnded;
+### 🔁 Advanced Functionalities
 
-    /// @notice Flag indicating if all refunds have been processed
-    bool public allRefunded;
+* **Partial refunds** available during auction (0% fee).
+* **Post-auction refunds** handled by owner with **2% commission**.
+* **Commission tracking** and **withdrawal** by owner.
+* Emergency **force-termination** before end time.
+* **Emergency withdrawal** of contract funds by owner.
+* Fully encapsulated **bidder struct** and private finalization logic.
+* **receive() / fallback()** functions revert unintended ETH transfers.
 
-    /// @notice Current highest bidder information
-    Bidder public highestBidder;
+---
 
-    /// @notice Information about the auction winner and the winning bid
-    Bidder public winner;
+## ⚙️ Constructor Parameters
 
-    /// @notice Mapping of addresses to their pending refund amounts
-    mapping(address => uint256) public pendingReturns;
+| Parameter        | Value        | Description                                     |
+| ---------------- | ------------ | ----------------------------------------------- |
+| `duration`       | `7 days`     | Auction duration from deployment                |
+| `minIncrease`    | `105`        | Minimum bid increment multiplier (5%)           |
+| `commissionRate` | `2`          | Commission % for post-auction refunds           |
+| `extensionTime`  | `10 minutes` | Time added if a bid is placed near the deadline |
+| `initBid`        | `1 ether`    | Minimum value for the first bid                 |
 
-    /// @notice Array of all bids placed in the auction
-    Bidder[] private allBids;
+---
 
-    // ==============================================
-    //                   EVENTS
-    // ==============================================
+## 📊 Contract Variables
 
-    /**
-     * @notice Emitted when a new bid is placed
-     * @param bidder Address of the bidder
-     * @param amount Amount of the bid
-     */
-    event NewBid(address indexed bidder, uint256 amount);
+| Variable           | Type       | Description                                      |
+| ------------------ | ---------- | ------------------------------------------------ |
+| `owner`            | `address`  | Address of the contract deployer                 |
+| `endTime`          | `uint256`  | Timestamp when auction ends                      |
+| `minIncrease`      | `uint256`  | Bid increment multiplier (e.g., 105 = +5%)       |
+| `commissionRate`   | `uint256`  | Commission rate used on post-auction refunds     |
+| `extensionTime`    | `uint256`  | Time added to auction if bid comes late          |
+| `initBid`          | `uint256`  | Minimum first bid (1 ETH)                        |
+| `totalCommission`  | `uint256`  | Total accumulated commissions                    |
+| `isEnded`          | `bool`     | Whether auction has been finalized or terminated |
+| `refundsProcessed` | `bool`     | Whether all non-winning refunds were handled     |
+| `highestBidder`    | `Bidder`   | Current highest bid info                         |
+| `winner`           | `Bidder`   | Winner and winning amount                        |
+| `pendingRefunds`   | `mapping`  | Refund balances for outbid participants          |
+| `allBids`          | `Bidder[]` | Chronological list of all bids                   |
 
-    /**
-     * @notice Emitted when auction ends
-     * @param winner Address of the winning bidder
-     * @param amount Winning bid amount
-     */
-    event AuctionEnded(address indexed winner, uint256 amount);
+---
 
-    /**
-     * @notice Emitted when a partial refund is processed
-     * @param bidder Address receiving refund
-     * @param amount Full refund amount (no commission)
-     */
-    event PartialRefund(address indexed bidder, uint256 amount);
+### 📦 `Bidder` Struct
 
-    /**
-     * @notice Emitted when a full refund is processed
-     * @param bidder Address receiving refund
-     * @param amount Refund amount after commission
-     */
-    event Refunded(address indexed bidder, uint256 amount);
-
-    /**
-     * @notice Emitted when the owner withdraws the winning bid amount
-     * @param owner Address of the contract owner receiving funds
-     * @param amount Amount withdrawn (full winning bid amount)
-     */
-    event OwnerWithdrawal(address indexed owner, uint256 amount);
-
-    // ==============================================
-    //                 MODIFIERS
-    // ==============================================
-
-    /// @dev Modifier restricting access to contract owner
-    modifier onlyOwner() {
-        require(
-            msg.sender == owner,
-            "Only the owner can execute this function."
-        );
-        _;
-    }
-
-    /// @dev Modifier ensuring auction is still active
-    modifier onlyActive() {
-        require(block.timestamp < endTime, "Auction has ended");
-        require(!isAuctionEnded, "Auction has been terminated");
-        _;
-    }
-
-    /// @dev Modifier ensuring auction has ended
-    modifier onlyEnded() {
-        require(
-            block.timestamp >= endTime || isAuctionEnded,
-            "Auction is still active"
-        );
-        _;
-    }
-
-    /// @dev Modifier preventing owner from bidding
-    modifier notOwner() {
-        require(msg.sender != owner, "Owner cannot place bids");
-        _;
-    }
-
-    // ==============================================
-    //              CONSTRUCTOR
-    // ==============================================
-
-    /**
-     * @notice Contract constructor initializing auction parameters
-     * @dev Sets default auction parameters (7 day duration, 5% min increase, 2% commission)
-     */
-    constructor() {
-        owner = msg.sender;
-        endTime = block.timestamp + 7 days;
-        minBidIncrease = 105; // 5% minimum increase
-        commissionRate = 2; // 2% commission
-        extensionTime = 10 minutes;
-        isAuctionEnded = false;
-    }
-
-    // ==============================================
-    //              PUBLIC FUNCTIONS
-    // ==============================================
-
-    /**
-     * @notice Places a bid in the auction
-     * @dev Bid must be at least 5% higher than current highest bid
-     * @dev Extends auction time if bid is placed within last 10 minutes
-     * @dev Emits NewBid event on successful bid
-     * @dev Automatically finalizes auction if time has expired
-     */
-    function bid() external payable onlyActive notOwner {
-        require(msg.value > 0, "Bid must be greater than 0");
-        require(
-            msg.value >= (highestBidder.amount * minBidIncrease) / 100,
-            "Bid must be at least 5% higher than current bid"
-        );
-
-        // If there is a previous bid, add it to pending reimbursements
-        if (highestBidder.bidderAddress != address(0)) {
-            pendingReturns[highestBidder.bidderAddress] += highestBidder.amount;
-        }
-
-        // Register the offer
-        highestBidder = Bidder(msg.sender, msg.value);
-        allBids.push(highestBidder);
-
-        // Extend the auction if the bid arrives in the last 10 minutes
-        if (endTime - block.timestamp < extensionTime) {
-            endTime += extensionTime;
-        }
-
-        emit NewBid(msg.sender, msg.value);
-
-        // End auction if time has expired
-        if (block.timestamp >= endTime) {
-            _finalizeAuction();
-        }
-    }
-
-    /**
-     * @notice Get winner information
-     * @dev Only available after auction ends
-     * @return Address and amount of winning bid
-     */
-    function getWinner() external view onlyEnded returns (address, uint256) {
-        return (winner.bidderAddress, winner.amount);
-    }
-
-    /**
-     * @notice Get all bids placed in auction
-     * @return Array of Bidder structs containing all bids
-     */
-    function getAllBids() external view returns (Bidder[] memory) {
-        return allBids;
-    }
-
-    /**
-     * @notice Withdraw refundable amounts
-     * @dev Emits PartialRefund event based on auction state
-     */
-    function partialRefund() external onlyActive {
-        uint256 refundable = pendingReturns[msg.sender];
-        require(refundable > 0, "No refund available");
-        pendingReturns[msg.sender] = 0; // Prevent reentrancy
-
-        (bool success, ) = payable(msg.sender).call{value: refundable}("");
-        require(success, "Transfer failed");
-
-        emit PartialRefund(msg.sender, refundable);
-    }
-
-    /**
-     * @notice Ends the auction and declares the winner
-     * @dev Allows anyone to finalize the auction after the end time has passed
-     * @dev Emits `AuctionEnded` event with winner address and winning amount
-     */
-    function finalizeAuction() external {
-        require(!isAuctionEnded, "Auction already ended");
-        require(block.timestamp >= endTime, "Auction has not ended yet");
-        _finalizeAuction();
-    }
-
-    /**
-     * @notice Get remaining auction time
-     * @return secondsLeft Remaining time in seconds (0 if ended)
-     */
-    function getRemainingTime() external view returns (uint256) {
-        if (block.timestamp >= endTime || isAuctionEnded) return 0;
-        return endTime - block.timestamp;
-    }
-
-    // ==============================================
-    //             RESTRICTED FUNCTIONS
-    // ==============================================
-
-    /**
-     * @notice Refunds all non-winning bidders automatically
-     * @dev Only callable by owner after auction ends
-     * @dev Processes all bids except the winning one
-     * @dev Emits Refunded event for each processed bid
-     */
-    function refundAll() external onlyOwner onlyEnded {
-        require(!allRefunded, "All bids already refunded");
-
-        for (uint256 i = 0; i < allBids.length; i++) {
-            if (
-                allBids[i].bidderAddress != winner.bidderAddress &&
-                pendingReturns[allBids[i].bidderAddress] > 0
-            ) {
-                uint256 refundable = pendingReturns[allBids[i].bidderAddress];
-                require(refundable > 0, "No refund available");
-                pendingReturns[allBids[i].bidderAddress] = 0; // Prevent reentrancy
-                uint256 commission = (refundable * commissionRate) / 100; // Transfer with 2% commission
-                totalCommission += commission;
-                uint256 toTransfer = refundable - commission;
-
-                (bool success, ) = payable(allBids[i].bidderAddress).call{
-                    value: toTransfer
-                }("");
-                require(success, "Transfer failed");
-
-                emit Refunded(allBids[i].bidderAddress, toTransfer);
-            }
-        }
-        allRefunded = true;
-    }
-
-    /**
-     * @notice Withdraws the winning bid amount to the owner
-     * @dev Can only be called by the owner after the auction has ended
-     * @dev Transfers the full winning bid amount to the contract owner
-     */
-    function withdrawWinningBid() external onlyOwner onlyEnded {
-        require(
-            highestBidder.amount > 0 || totalCommission > 0,
-            "Already withdrawn"
-        );
-        uint256 amount = highestBidder.amount + totalCommission;
-        highestBidder.amount = 0; // Prevent reentrancy
-        totalCommission = 0;
-
-        (bool success, ) = payable(owner).call{value: amount}("");
-        require(success, "Transfer failed");
-
-        emit OwnerWithdrawal(owner, amount);
-    }
-
-    // ==============================================
-    //              INTERNAL FUNCTIONS
-    // ==============================================
-
-    /**
-     * @dev Internal function to finalize the auction
-     * @dev Sets auction state to ended and records winning bid information
-     */
-    function _finalizeAuction() private {
-        isAuctionEnded = true;
-        winner.bidderAddress = highestBidder.bidderAddress;
-        winner.amount = highestBidder.amount;
-        emit AuctionEnded(winner.bidderAddress, winner.amount);
-    }
-
-    // ==============================================
-    //      FALLBACK / RECEIVE SAFETY MECHANISMS
-    // ==============================================
-
-    /**
-     * @notice Rejects direct ETH transfers without data
-     */
-    receive() external payable {
-        revert("Direct ETH transfers not allowed");
-    }
-
-    /**
-     * @notice Rejects calls to undefined functions or direct ETH with data
-     */
-    fallback() external payable {
-        revert("Invalid function call or direct ETH transfer");
-    }
+```solidity
+struct Bidder {
+    address bidderAddress;
+    uint256 amount;
 }
+```
+
+---
+
+## 📂 Public Functions
+
+### 🔨 `bid()`
+
+* Places a new bid.
+* Enforces minimum 1 ETH and 5% increment over previous bid.
+* Extends time if near deadline.
+* Automatically finalizes if time expired.
+* Emits `NewBid`.
+
+### 💸 `partialRefund()`
+
+* Allows outbid participants to withdraw their ETH **during** the auction.
+* No commission applied.
+* Emits `PartialRefund`.
+
+### 🏆 `getWinner()`
+
+* Returns the winner's address and amount.
+* Only callable **after** auction ends.
+
+### 📜 `getAllBids()`
+
+* Returns an array with all placed bids.
+
+### ⏳ `getRemainingTime()`
+
+* Returns remaining seconds until auction ends.
+* Returns `0` if finalized or expired.
+
+### 🛑 `finalizeAuction()`
+
+* Finalizes auction publicly if time has ended.
+* Sets the winner.
+* Emits `AuctionEnded`.
+
+### 💳 `refundAll()`
+
+* Callable only by owner.
+* Processes all non-winning refunds with **2% fee**.
+* Emits `BidRefunded` for each address.
+
+### 💰 `withdrawWinningBid()`
+
+* Allows owner to withdraw winning bid + commissions.
+* Emits `OwnerWithdrawal`.
+
+### 🚨 `forceTerminateAuction()`
+
+* Lets owner force-end the auction **before** `endTime`.
+* Emits `AuctionForceEnded`.
+
+### 🆘 `emergencyWithdraw()`
+
+* Emergency function for owner to drain contract funds.
+* Emits `EmergencyWithdrawal`.
+
+### 🚫 `receive()` / `fallback()`
+
+```solidity
+receive() external payable {
+    revert("Direct ETH transfers not allowed");
+}
+
+fallback() external payable {
+    revert("Invalid function call or direct ETH transfer");
+}
+```
+
+* Rejects unintended ETH transfers and invalid calls.
+
+---
+
+## 📣 Events
+
+| Event                 | Description                                      |
+| --------------------- | ------------------------------------------------ |
+| `NewBid`              | A new valid bid was submitted                    |
+| `AuctionEnded`        | Auction finalized and winner declared            |
+| `AuctionForceEnded`   | Auction forcibly ended by owner before `endTime` |
+| `PartialRefund`       | Full refund during active auction                |
+| `BidRefunded`         | Post-auction refund with 2% commission applied   |
+| `OwnerWithdrawal`     | Owner withdrew winning bid + commissions         |
+| `EmergencyWithdrawal` | Owner withdrew all funds (emergency only)        |
+
+---
+
+## 🛡️ Modifiers
+
+| Modifier     | Description                                          |
+| ------------ | ---------------------------------------------------- |
+| `onlyOwner`  | Restricts access to owner-only functions             |
+| `onlyActive` | Ensures the auction is still ongoing                 |
+| `onlyEnded`  | Ensures the auction has ended or was forcibly ended  |
+| `nonOwner`   | Prevents the owner from participating in the auction |
+
+---
+
+## 🚀 Deployment Guide
+
+### Requirements
+
+* Wallet with Sepolia ETH
+* MetaMask or compatible wallet
+* Hardhat, Remix, or Foundry (for compilation)
+
+### Steps
+
+1. Clone repository.
+2. Compile contract using Solidity >0.8.0.
+3. Deploy on Sepolia.
+4. Save deployed address and verify via Etherscan.
+
+---
+
+## 🧪 Usage Guide
+
+* Users call `bid()` with ≥1 ETH and at least 5% over last bid.
+* If outbid, call `partialRefund()` to retrieve ETH.
+* After end time, call `finalizeAuction()` (anyone can do this).
+* Owner then must:
+
+  * Call `refundAll()` to return non-winning funds with commission.
+  * Call `withdrawWinningBid()` to claim earnings.
+
+---
+
+## 🔐 Security Considerations
+
+* Complies with **Checks-Effects-Interactions** pattern.
+* All ETH transfers use `.call()` and are wrapped with safety checks.
+* **Reentrancy-safe**: no external calls before state updates.
+* Owner is restricted from bidding (`nonOwner`).
+* Full ETH transfer lockdown via `receive()` and `fallback()` rejection.
+* Emergency functions (`forceTerminateAuction`, `emergencyWithdraw`) are protected by `onlyOwner`.
+
+---
+
+## 📎 External Links
+
+* 🔗 [Sepolia Faucet](https://sepoliafaucet.com/)
+* 🧠 [Solidity Docs](https://docs.soliditylang.org/)
+* 🛠️ [Remix IDE](https://remix.ethereum.org/)
+* 📡 [Etherscan (Sepolia)](https://sepolia.etherscan.io/)
+
+---
+
+## 📄 License
+
+This project is licensed under the MIT License.
+
+---
