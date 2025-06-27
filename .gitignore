@@ -173,7 +173,3 @@ $RECYCLE.BIN/
 
 # Windows shortcuts
 *.lnk
-
-### Solidity: Artifacts and build ###
-# Contract compilation files
-artifacts/
